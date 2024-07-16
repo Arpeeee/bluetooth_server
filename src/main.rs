@@ -1,78 +1,64 @@
-// use btleplug::api::{CentralEvent, Manager as _, ScanFilter};
-use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter, WriteType};
-use btleplug::platform::Manager;
-use btleplug::platform::Peripheral;
+use btleplug::api::{bleuuid::BleUuid, Central, CentralEvent, Manager as _, ScanFilter};
+use btleplug::platform::{Adapter, Manager};
 use futures::stream::StreamExt;
 use std::error::Error;
-use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
-// const UUID: &str = "12345678-1234-5678-1234-567812345678"; // Example UUID, replace with your actual UUID
-use tokio::time;
+
+async fn get_central(manager: &Manager) -> Adapter {
+    let adapters = manager.adapters().await.unwrap();
+    adapters.into_iter().nth(0).unwrap()
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    pretty_env_logger::init();
+
     let manager = Manager::new().await?;
-    let adapters = manager.adapters().await?;
-    let central = adapters
-        .into_iter()
-        .nth(0)
-        .expect("No Bluetooth adapters found");
 
+    // get the first bluetooth adapter
+    // connect to the adapter
+    let central = get_central(&manager).await;
+
+    // Each adapter has an event stream, we fetch via events(),
+    // simplifying the type, this will return what is essentially a
+    // Future<Result<Stream<Item=CentralEvent>>>.
+    let mut events = central.events().await?;
+
+    // start scanning for devices
     central.start_scan(ScanFilter::default()).await?;
-    println!("掃描中...");
 
-    // let server_name = "MyRustBluetoothServer";
-
-    // let mut events = central.events().await?;
-    // while let Some(event) = events.next().await {
-    //     match event {
-    //         CentralEvent::DeviceDiscovered(id) => {
-    //             let peripheral = central.peripheral(&id).await?;
-    //             println!("發現裝置: {:?}", peripheral.properties().await?);
-
-    //             // 連接並發送數據
-    //             // if let Err(e) = connect_and_send_data(peripheral).await {
-    //             //     eprintln!("數據傳輸失敗: {:?}", e);
-    //             // }
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
-    time::sleep(Duration::from_secs(5)).await;
-
-    // List the devices found
-    let devices = central.peripherals().await?;
-    if devices.is_empty() {
-        println!("No devices found.");
-    } else {
-        for device in devices {
-            let properties = device.properties().await?.unwrap();
-            let name = properties
-                .local_name
-                .unwrap_or_else(|| "Unknown".to_string());
-            println!("Found device: {} ({})", name, device.address());
+    // Print based on whatever the event receiver outputs. Note that the event
+    // receiver blocks, so in a real program, this should be run in its own
+    // thread (not task, as this library does not yet use async channels).
+    while let Some(event) = events.next().await {
+        match event {
+            CentralEvent::DeviceDiscovered(id) => {
+                println!("DeviceDiscovered: {:?}", id);
+            }
+            CentralEvent::DeviceConnected(id) => {
+                println!("DeviceConnected: {:?}", id);
+            }
+            CentralEvent::DeviceDisconnected(id) => {
+                println!("DeviceDisconnected: {:?}", id);
+            }
+            CentralEvent::ManufacturerDataAdvertisement {
+                id,
+                manufacturer_data,
+            } => {
+                println!(
+                    "ManufacturerDataAdvertisement: {:?}, {:?}",
+                    id, manufacturer_data
+                );
+            }
+            CentralEvent::ServiceDataAdvertisement { id, service_data } => {
+                println!("ServiceDataAdvertisement: {:?}, {:?}", id, service_data);
+            }
+            CentralEvent::ServicesAdvertisement { id, services } => {
+                let services: Vec<String> =
+                    services.into_iter().map(|s| s.to_short_string()).collect();
+                println!("ServicesAdvertisement: {:?}, {:?}", id, services);
+            }
+            _ => {}
         }
     }
-
-    // Stop scanning
-    central.stop_scan().await?;
-
     Ok(())
 }
-
-// async fn connect_and_send_data(peripheral: Peripheral) -> Result<(), Box<dyn Error>> {
-//     peripheral.connect().await?;
-//     println!("連接成功");
-
-//     let data = b"Hello, client!";
-//     peripheral
-//         .write(UUID, data, WriteType::WithoutResponse)
-//         .await?;
-//     println!("數據已發送");
-
-//     peripheral.disconnect().await?;
-//     println!("已斷開連接");
-
-//     Ok(())
-// }
