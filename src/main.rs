@@ -1,64 +1,41 @@
-use btleplug::api::{bleuuid::BleUuid, Central, CentralEvent, Manager as _, ScanFilter};
-use btleplug::platform::{Adapter, Manager};
-use futures::stream::StreamExt;
+use btleplug::api::{Central, Manager as _, Peripheral, PeripheralProperties, ScanFilter};
+use btleplug::platform::Manager;
 use std::error::Error;
-
-async fn get_central(manager: &Manager) -> Adapter {
-    let adapters = manager.adapters().await.unwrap();
-    adapters.into_iter().nth(0).unwrap()
-}
+use tokio::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    pretty_env_logger::init();
-
     let manager = Manager::new().await?;
+    let adapters = manager.adapters().await?;
+    let central = adapters.into_iter().next().unwrap();
 
-    // get the first bluetooth adapter
-    // connect to the adapter
-    let central = get_central(&manager).await;
-
-    // Each adapter has an event stream, we fetch via events(),
-    // simplifying the type, this will return what is essentially a
-    // Future<Result<Stream<Item=CentralEvent>>>.
-    let mut events = central.events().await?;
-
-    // start scanning for devices
+    // Start scanning for devices
     central.start_scan(ScanFilter::default()).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Print based on whatever the event receiver outputs. Note that the event
-    // receiver blocks, so in a real program, this should be run in its own
-    // thread (not task, as this library does not yet use async channels).
-    while let Some(event) = events.next().await {
-        match event {
-            CentralEvent::DeviceDiscovered(id) => {
-                println!("DeviceDiscovered: {:?}", id);
-            }
-            CentralEvent::DeviceConnected(id) => {
-                println!("DeviceConnected: {:?}", id);
-            }
-            CentralEvent::DeviceDisconnected(id) => {
-                println!("DeviceDisconnected: {:?}", id);
-            }
-            CentralEvent::ManufacturerDataAdvertisement {
-                id,
-                manufacturer_data,
-            } => {
-                println!(
-                    "ManufacturerDataAdvertisement: {:?}, {:?}",
-                    id, manufacturer_data
-                );
-            }
-            CentralEvent::ServiceDataAdvertisement { id, service_data } => {
-                println!("ServiceDataAdvertisement: {:?}, {:?}", id, service_data);
-            }
-            CentralEvent::ServicesAdvertisement { id, services } => {
-                let services: Vec<String> =
-                    services.into_iter().map(|s| s.to_short_string()).collect();
-                println!("ServicesAdvertisement: {:?}, {:?}", id, services);
-            }
-            _ => {}
-        }
+    // Set up your service and characteristic UUIDs
+    let service_uuid = uuid::Uuid::parse_str("YOUR_SERVICE_UUID_HERE")?;
+    let characteristic_uuid = uuid::Uuid::parse_str("YOUR_CHARACTERISTIC_UUID_HERE")?;
+
+    // Create a peripheral
+    let local_name = "RustBLEServer";
+    let mut peripheral = central.peripheral(local_name).await?;
+
+    // Add a service and characteristic
+    peripheral.add_service(service_uuid).await?;
+    peripheral
+        .add_characteristic(service_uuid, characteristic_uuid, vec![])
+        .await?;
+
+    // Start advertising
+    peripheral.start_advertising().await?;
+
+    println!("BLE Server started. Advertising as '{}'", local_name);
+
+    // Keep the program running
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
+
     Ok(())
 }
